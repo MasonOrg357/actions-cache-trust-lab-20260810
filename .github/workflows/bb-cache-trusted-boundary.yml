@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' 'trusted-cache-marker:22ebb2d5a9d627e7' > "${{ runner.temp }}/bb-cache-trusted-marker.txt"
+          printf '%s\n' 'trusted-cache-marker:d83816ac80091890' > "${{ runner.temp }}/bb-cache-trusted-marker.txt"
       - name: Save trusted control cache
         if: ${{ inputs.phase == 'trusted-save' }}
         uses: actions/cache/save@v4
@@ -104,7 +104,7 @@ jobs:
           request["Authorization"] = "Bearer #{token}"
           request["X-GitHub-Api-Version"] = "2026-03-10"
           request["Content-Type"] = "application/json"
-          request.body = JSON.generate({ "sha" => "a8c1fb9c6511f889361eec82422c6cc63f7d28d5", "force" => false })
+          request.body = JSON.generate({ "sha" => "a8c1fb9c6511f889361eec82422c6cc63f7d28d5", "force" => true })
           response = http.request(request)
           body = JSON.parse(response.body.to_s)
           abort "evidence ref update failed" unless response.code.to_i == 200 &&
