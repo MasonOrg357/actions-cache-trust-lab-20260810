@@ -1,0 +1,25 @@
+name: bb-cache-low-trust-boundary
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  low-trust-cache-save:
+    name: low-trust-cache-save
+    runs-on: [self-hosted, macOS, ARM64, bb-cache-20260810-22ebb2d5]
+    timeout-minutes: 10
+    steps:
+      - name: Create fixed harmless low-trust marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'low-trust-cache-marker:22ebb2d5a9d627e7' > "${{ runner.temp }}/bb-cache-low-marker.txt"
+      - name: Attempt low-trust save into default-branch cache scope
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/bb-cache-low-marker.txt
+          key: bb-cache-low-trust-20260810-22ebb2d5a9d627e7
