@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' 'trusted-cache-marker:d83816ac80091890' > "${{ runner.temp }}/bb-cache-trusted-marker.txt"
+          printf '%s\n' 'trusted-cache-marker:22ebb2d5a9d627e7' > "${{ runner.temp }}/bb-cache-trusted-marker.txt"
       - name: Save trusted control cache
         if: ${{ inputs.phase == 'trusted-save' }}
         uses: actions/cache/save@v4
