@@ -1,0 +1,120 @@
+name: bb-cache-trusted-boundary
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: Controlled cache phase
+        required: true
+        type: choice
+        options:
+          - trusted-save
+          - trusted-restore
+          - low-trust-restore
+
+permissions:
+  contents: write
+
+jobs:
+  trusted-cache-boundary:
+    name: trusted-cache-boundary
+    runs-on: [self-hosted, macOS, ARM64, bb-cache-20260810-22ebb2d5]
+    timeout-minutes: 10
+    steps:
+      - name: Prepare trusted marker
+        if: ${{ inputs.phase == 'trusted-save' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'trusted-cache-marker:22ebb2d5a9d627e7' > "${{ runner.temp }}/bb-cache-trusted-marker.txt"
+      - name: Save trusted control cache
+        if: ${{ inputs.phase == 'trusted-save' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/bb-cache-trusted-marker.txt
+          key: bb-cache-trusted-20260810-22ebb2d5a9d627e7
+      - name: Restore exact cache key
+        if: ${{ inputs.phase != 'trusted-save' }}
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ inputs.phase == 'trusted-restore' && format('{0}/bb-cache-trusted-marker.txt', runner.temp) || format('{0}/bb-cache-low-marker.txt', runner.temp) }}
+          key: ${{ inputs.phase == 'trusted-restore' && 'bb-cache-trusted-20260810-22ebb2d5a9d627e7' || 'bb-cache-low-trust-20260810-22ebb2d5a9d627e7' }}
+      - name: Verify marker digest and update isolated evidence ref
+        if: ${{ inputs.phase != 'trusted-save' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          PHASE: ${{ inputs.phase }}
+          CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
+        run: |
+          ruby <<'RUBY'
+          require "digest"
+          require "json"
+          require "net/http"
+          require "openssl"
+          require "uri"
+
+          repository = ENV.fetch("GH_REPOSITORY")
+          phase = ENV.fetch("PHASE")
+          cache_hit = ENV.fetch("CACHE_HIT", "")
+          token = ENV.fetch("GH_TOKEN")
+          runner_temp = ENV.fetch("RUNNER_TEMP_DIR")
+          abort "repository drift" unless repository == "MasonOrg357/actions-cache-trust-lab-20260810"
+          abort "empty job token" if token.empty?
+
+          expected = if phase == "trusted-restore"
+                       {
+                         "path" => File.join(runner_temp, "bb-cache-trusted-marker.txt"),
+                         "digest" => "63fd65b70eb5d740c8d2335ed4d18511b9398765349d745d3f0afa37e1553509",
+                         "branch" => "cache-trusted-control-20260810",
+                         "required" => true
+                       }
+                     elsif phase == "low-trust-restore"
+                       {
+                         "path" => File.join(runner_temp, "bb-cache-low-marker.txt"),
+                         "digest" => "eb3ab87506198d2c2dae965f51d7f8b9ef1f7764ae9f400e82bf02775f53472b",
+                         "branch" => "cache-low-trust-target-20260810",
+                         "required" => false
+                       }
+                     else
+                       abort "phase drift"
+                     end
+
+          unless File.file?(expected["path"])
+            abort "required trusted cache miss" if expected["required"]
+            abort "cache-hit output claimed hit without marker" if cache_hit == "true"
+            puts JSON.generate({ "phase" => phase, "cache_hit" => false, "marker_present" => false })
+            exit 0
+          end
+
+          digest = Digest::SHA256.file(expected["path"]).hexdigest
+          abort "marker digest mismatch" unless digest == expected["digest"]
+          abort "cache-hit output did not confirm exact hit" unless cache_hit == "true"
+
+          uri = URI("https://api.github.com/repos/#{repository}/git/refs/heads/#{expected['branch']}")
+          http = Net::HTTP::Proxy("127.0.0.1", 8083).new(uri.host, uri.port)
+          http.use_ssl = true
+          http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+          request = Net::HTTP::Patch.new(uri.request_uri)
+          request["User-Agent"] = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+          request["Accept"] = "application/vnd.github+json"
+          request["Authorization"] = "Bearer #{token}"
+          request["X-GitHub-Api-Version"] = "2026-03-10"
+          request["Content-Type"] = "application/json"
+          request.body = JSON.generate({ "sha" => "a8c1fb9c6511f889361eec82422c6cc63f7d28d5", "force" => false })
+          response = http.request(request)
+          body = JSON.parse(response.body.to_s)
+          abort "evidence ref update failed" unless response.code.to_i == 200 &&
+                                                    body.dig("object", "sha") == "a8c1fb9c6511f889361eec82422c6cc63f7d28d5"
+          puts JSON.generate({
+            "phase" => phase,
+            "cache_hit" => true,
+            "marker_present" => true,
+            "marker_sha256" => digest,
+            "evidence_branch" => expected["branch"],
+            "evidence_sha" => body.dig("object", "sha")
+          })
+          RUBY
